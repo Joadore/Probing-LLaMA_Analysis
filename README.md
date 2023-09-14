@@ -1,0 +1,4 @@
+# Beyond Surface: Probing LLaMA Across Scales and Layers
+ This is the official project related to our paper: [**Beyond Surface: Probing LLaMA Across Scales and Layers**](https://arxiv.org/abs/2312.04333). The project aims to probe LLaMA and investigate its capabilities across different complex tasks. This analysis is being presented by new owner Joadore. 
+## Overview
+ This projects presents an in-depth analysis of Large Language Models (LLMs), focusing on LLaMA, a prominent open-source foundational model in natural language processing. Instead of assessing LLaMA through its generative output, we design multiple-choice tasks to probe its intrinsic understanding in high-order tasks such as reasoning and computation...

@@ -1,3 +1,4 @@
+
 # Ref: https://github.com/kojima-takeshi188/zero_shot_cot
 # Ref: https://github.com/sylinrl/TruthfulQA/blob/main/truthfulqa/metrics.py
 # Ref: https://github.com/sylinrl/TruthfulQA/blob/main/truthfulqa/utilities.py
@@ -18,7 +19,7 @@ import ssl
 import urllib.request
 import zipfile
 
-from CN.LLaMA_Analysis.modell import LLaMA_Analysis
+from model import LLaMA_Analysis
 
 transformers.logging.set_verbosity(40)
 
@@ -147,24 +148,27 @@ def is_correct(model_answer, answer):
     return model_answer == gt_answer
 
 def create_demo_text():
-    question, answer = [], []
+    context, question, answer = [], [], []
     
-    question.append("G20 consists of <mask>.")
-    answer.append("Canada")
+    context.append("In rheumatoid arthritis, the body' s immune system misfunctions by attacking healthy cells in the joints causing the release of a hormone that in turn causes pain and swelling. This hormone is normally activated only in reaction to injury or infection. A new arthritis medication will contain a protein that inhibits the functioning of the hormone that causes pain and swelling in the joints.")
+    question.append("The statements above, if true, most strongly support which one of the following conclusions?")
+    answer.append("A patient treated with the new medication for rheumatoid arthritis could sustain a joint injury without becoming aware of it.")
 
-    question.append("kerosene is a subclass of <mask>.")
-    answer.append("petroleum")
+    context.append("Patient: Pharmacists maintain that doctors should not be permitted to sell the medicine that they prescribe because doctors would then be tempted to prescribe unnecessary medicines in order to earn extra income. But pharmacists have a financial interest in having a monopoly on the sale of prescription medicines, so their objection to the sale of medicines by doctors cannot be taken seriously.")
+    question.append("The patient's argument proceeds by")
+    answer.append("attempting to discredit a position by questioning the motives of the proponents of that position")
+    
 
-    question.append("sundial is a subclass of <mask>.")
-    answer.append("clock")
-
-    question.append("Bordeaux and <mask> are twin cities.")
-    answer.append("Casablanca")
+    context.append("Paula will visit the dentist tomorrow morning only if Bill goes golfing in the morning. Bill will not go golfing unless Damien agrees to go golfing too. However, Damien has decided not to go golfing. Ttherefore, Paula will not be visiting the dentist tomorrow morning.")
+    question.append("The pattern of reasoning displayed above most closely parallels which of the following?")
+    answer.append("Kevin will wash his car tomorrow only if Brittany has to go visit her grandmother. Unless Aunt Susan has to run errands, Brittany will not have to go visit her grandmother. Since Aunt Susan does not have to run errands, Kevin will not wash his car tomorrow.")
+    # question.append("whaling is a subclass of <mask>.")
+    # answer.append("hunting")
 
     # Concatenate demonstration examples ...
-    demo_text = 'Please complete the following text so that it is factually correct.' + '\n\n'
+    demo_text = 'Please answer the logical question based on the passage.' + '\n\n'
     for i in range(len(question)):
-        demo_text += "Q: " + question[i] + "\nA: " + answer[i] + "\n\n"
+        demo_text += "P: " + context[i] + "\nQ: " + question[i] + "\nA: " + answer[i] + "\n\n"
     return demo_text
 
 
@@ -178,9 +182,9 @@ def build_prompt_with_answer(question, answer):
     input_text_prompt = demo + "Q: " + question + "\n" + "A: " + answer
     return input_text_prompt
 
-def build_prompt_and_answer(input_text, answer):
+def build_prompt_and_answer(context, input_text, answer):
     demo = create_demo_text()
-    input_text_prompt = demo + "Q: " + input_text + "\n" + "A:"
+    input_text_prompt = demo + "P: " + context +  "\nQ: " + input_text + "\n" + "A:"
     continue_text = " " + answer
     return input_text_prompt, continue_text
 
@@ -278,8 +282,10 @@ if __name__ == "__main__":
     device = args.device
 
     # Get test file
-
-    list_data_dict = load_tsv(args.data_path)
+    with open(args.data_path, 'r') as f:
+        list_data_dict = json.load(f)
+    
+    
     
 
     if args.debug:
@@ -309,7 +315,8 @@ if __name__ == "__main__":
     result_dict = {'question': [], 'model_scores': [], 'total_mc1': 0.0, 'total_mc2': 0.0, 'total_mc3': 0.0}
     
     config = AutoConfig.from_pretrained(model_name)
-
+        # print(config)
+    # config.num_hidden_layers
     
     if args.layer_wise:
         all_results = {f'Layer_{i+1}_lm_head':{'total_mc1':0.0} for i in range(config.num_hidden_layers)}
@@ -320,10 +327,15 @@ if __name__ == "__main__":
         for ind, sample in enumerate(tqdm(list_data_dict)):
             # reference answers
             # sample = json.loads(sample)
-            ref_true = sample['answer_true']
+            ref_true = sample['answers'][sample['label']]
             # ref_best = format_best(sample['truth_answer'])
             # # ref_true = split_multi_answer(sample['answer_true'])
-            ref_false = split_multi_answer(sample['answer_false'])
+            # ref_false = split_multi_answer(sample['answer_false'])
+            ref_false = sample['answers']
+            ref_false.remove(ref_true)
+            # print(ref_true)
+            # print(ref_false)
+            assert ref_true not in ref_false
             # print('answer choices')
             # print(ref_best)
             # print(ref_true)
@@ -335,7 +347,7 @@ if __name__ == "__main__":
 
             # for temp_ans in ref_true:
                 # append the current answer choice to the prompt
-            prompt, answer = build_prompt_and_answer(sample['question'], ref_true)
+            prompt, answer = build_prompt_and_answer(sample['context'], sample['question'], ref_true)
             # print(prompt, answer)
             log_probs, c_dist = llm.lm_score(prompt, answer, **generate_kwargs)
             scores_true.append(log_probs)
@@ -344,7 +356,7 @@ if __name__ == "__main__":
 
             for temp_ans in ref_false:
                 # append the current answer choice to the prompt
-                prompt, answer = build_prompt_and_answer(sample['question'], temp_ans)
+                prompt, answer = build_prompt_and_answer(sample['context'], sample['question'], temp_ans)
                 
                 log_probs, c_dist = llm.lm_score(prompt, answer, **generate_kwargs)
                 scores_false.append(log_probs)
@@ -358,6 +370,10 @@ if __name__ == "__main__":
 
                     score = Math_Cals(list(score_true), list(score_false), ref_true)
                     
+                    # if np.isnan(score['MC1']) or np.isnan(score['MC2']) or np.isnan(score['MC3']):
+                    #     print(ind_)
+                    #     import ipdb; ipdb.set_trace()
+                        
                         
                     if args.layer_wise:
                         key_ = f'Layer_{ind_+1}_lm_head'
@@ -365,23 +381,20 @@ if __name__ == "__main__":
                         key_ = f'Layer_{ind_+1}_attention'
 
                     # update total scores
-                    
                     all_results[key_]['total_mc1'] += score['MC1']
-
+                    # all_results[key_]['total_mc2'] += score['MC2']
+                    # all_results[key_]['total_mc3'] += score['MC3']
 
     # Average the scores
-    # 'add': 0.0, 'sub': 0.0, 'mul': 0.0, 'div': 0.0, 'mix_ops_2': 0.0, 'mix_ops_3': 0.0, "min_ops_brackets":0.0
     for key, value in all_results.items():
-
         all_results[key]['total_mc1'] /= len(list_data_dict)
+        # all_results[key]['total_mc3'] /= len(list_data_dict)
 
+    # Print the final scores, separated by ', '
         print(f'{key} MC1: \n{all_results[key]}')
-        
+
     import pandas as pd    
     df = pd.DataFrame(all_results)
-    # df.drop(index=['total_mc2','total_mc1'])
-    # df.remove('question')
-    # Write the DataFrame to an Excel file
     if not args.attention:
         file_name = args.output_path + f'output-path_layer_wise.xlsx'
     else:

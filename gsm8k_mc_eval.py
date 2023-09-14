@@ -1,3 +1,4 @@
+
 # Ref: https://github.com/kojima-takeshi188/zero_shot_cot
 # Ref: https://github.com/sylinrl/TruthfulQA/blob/main/truthfulqa/metrics.py
 # Ref: https://github.com/sylinrl/TruthfulQA/blob/main/truthfulqa/utilities.py
@@ -18,7 +19,7 @@ import ssl
 import urllib.request
 import zipfile
 
-from CN.LLaMA_Analysis.modell import LLaMA_Analysis
+from model import LLaMA_Analysis
 
 transformers.logging.set_verbosity(40)
 
@@ -32,13 +33,13 @@ ANSWER_TRIGGER = "So the answer is"
 
 
 
-def split_multi_answer(ans, sep=',', close=True):
+def split_multi_answer(ans, sep=';', close=True):
 
     """Splits string of all reference answers into a list of formatted answers"""
 
-    answers = ans.strip().split(sep)
+    # answers = ans.strip().split(sep)
     split_answers = []
-    for a in answers[:-1]:
+    for a in answers:
         a = a.strip()
         if len(a):
             if close:  # add a period after all answers
@@ -51,6 +52,10 @@ def split_multi_answer(ans, sep=',', close=True):
 
     return split_answers
 
+
+def format_math(ans):
+    ans = ans.replace('\n', ' ').replace('####', 'The answer is')
+    return ans
 
 def format_best(best_ans, close=True):
 
@@ -78,29 +83,6 @@ def load_csv(file_path, is_gzip=False):
             list_data.append(data)
 
     return list_data
-
-
-def load_tsv(file_path, is_gzip=False):
-    # input file is in csv format, can be loaded by pandas
-    # required columns: [Question] only
-
-    open_func = open if not is_gzip else gzip.open
-    list_data = []
-    with open_func(file_path, 'r') as f:
-        
-        datas = f.readlines()
-    for data in datas[1:]:
-        split_data = data.split('\t')
-
-        if len(split_data[2].split(',')) >1:
-        
-            data = {'question': split_data[0], 
-                    'answer_true': split_data[1],
-                    'answer_false': split_data[2]}
-            list_data.append(data)
-
-    return list_data
-
 
 def download_url(url: str, folder='folder'):
     """
@@ -149,20 +131,31 @@ def is_correct(model_answer, answer):
 def create_demo_text():
     question, answer = [], []
     
-    question.append("G20 consists of <mask>.")
-    answer.append("Canada")
+    question.append("Carly collected 7 starfish with 5 arms each and one seastar with 14 arms. How many arms do the animals she collected have in total?")
+    answer.append("7 * 5 + 14 = <<7*5+14=49>>49. ")
 
-    question.append("kerosene is a subclass of <mask>.")
-    answer.append("petroleum")
+    question.append("Manny had 3 birthday cookie pies to share with his 24 classmates and his teacher, Mr. Keith. "
+                    "If each of the cookie pies were cut into 10 slices and Manny, his classmates, and Mr. Keith all had 1 piece, how many slices are left?")
+    answer.append("3 x 10 = <<3*10=30>>30 cookie pieces. 30 - 24 - 1 - 1 = <<30-24-1-1=4>>4 cookie pieces.")
 
-    question.append("sundial is a subclass of <mask>.")
-    answer.append("clock")
+    question.append("A new program had 60 downloads in the first month."
+                    "The number of downloads in the second month was three times as many as the downloads in the first month, but then reduced by 30% in the third month."
+                    "How many downloads did the program have total over the three months?")
+    answer.append("The number of downloads of the program in the second month increased to 3*60 = <<3*60=180>>180."
+                  "In the first two months, the total number of downloads of the program was 180+60 = <<180+60=240>>240."
+                  "In the third month, the number of downloads of the program reduced by 30/100*180 = <<30/100*180=54>>54"
+                  "There were 180-54 = <<180-54=126>>126 downloads in the third month."
+                  "In the three months, the total number of downloads of the program was 126+240 = <<126+240=366>>366.The answer is 366.")
 
-    question.append("Bordeaux and <mask> are twin cities.")
-    answer.append("Casablanca")
+    question.append("Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On "
+        "wednesday, he lost 2 more. "
+        "How many golf balls did he have at the end of wednesday?")
+    answer.append("Michael started with 58 golf balls. After losing 23 on tuesday, "
+        "he had 58 - 23 = 35. After losing 2 more, "
+        "After losing 2 more, he had 35 - 2 = 33 golf balls. The answer is 33.")
 
     # Concatenate demonstration examples ...
-    demo_text = 'Please complete the following text so that it is factually correct.' + '\n\n'
+    demo_text = 'Give the answer to the  math question step by step.' + '\n\n'
     for i in range(len(question)):
         demo_text += "Q: " + question[i] + "\nA: " + answer[i] + "\n\n"
     return demo_text
@@ -195,7 +188,7 @@ def Math_Cals(scores_true, scores_false, ref_best):
 
     # compute MC1: 1vFalse -- best correct answer vs all false answers
     max_false = max(scores_false)
-    if scores_true[0] > max_false:
+    if scores_true[ref_best] > max_false:
         scores['MC1'] = 1.0
     else:
         scores['MC1'] = 0.0
@@ -209,10 +202,10 @@ def MC_calcs(scores_true, scores_false, ref_true=None, ref_best=None):
     scores['diff'] = max(scores_true) - max(scores_false)
     scores['scores-true'] = scores_true
     scores['scores-false'] = scores_false
-
+    scores['max_false'] = max(scores_false)
     # compute MC1: 1vFalse -- best correct answer vs all false answers
     max_false = max(scores_false)
-    if scores_true[0] > max_false:
+    if scores_true[ref_true.index(ref_best)] > max_false:
         scores['MC1'] = 1.0
     else:
         scores['MC1'] = 0.0
@@ -222,15 +215,19 @@ def MC_calcs(scores_true, scores_false, ref_true=None, ref_best=None):
     onevall = sum(np.array(scores_true) > max_false) / float(len(scores_true))
     scores['MC3'] = onevall
 
+    # print(scores)
+    # print(ref_true)
+    # print(ref_best)
+    # exit()
     # compute MC2: normalized probability mass for correct answers
     probs_true = np.exp(scores_true)
     while sum(probs_true) == 0:
-        print("WARNING: all zero scores_true")
+        # print("WARNING: all zero scores_true")
         scores_true = [x/2.0 for x in scores_true]
         probs_true = np.exp(scores_true)
     probs_false = np.exp(scores_false)
     while sum(probs_false) == 0:
-        print("WARNING: all zero scores_false")
+        # print("WARNING: all zero scores_false")
         scores_false = [x/2.0 for x in scores_false]
         probs_false = np.exp(scores_false)
 
@@ -278,10 +275,19 @@ if __name__ == "__main__":
     device = args.device
 
     # Get test file
+    '''
+    The StrategyQA dataset includes the followings files:
+        strategyqa_train.json: The training set of StrategyQA, which includes 2,290 examples.
+        strategyqa_train_paragraphs.json: Paragraphs from our corpus that were matched as evidence for examples in the training set.
+        strategyqa_train_filtered.json: 2,821 additional questions, excluded from the official training set, that were filtered by our solvers during data collection (see more details in the paper).
+        strategyqa_test.json: The test set of StrategyQA, which includes 490 examples.
+    Here we only need the test set.
+    '''
 
-    list_data_dict = load_tsv(args.data_path)
+    with open(args.data_path, 'r') as f:
+        list_data_dict = f.readlines()
     
-
+    list_data_dict = list_data_dict[:1000]
     if args.debug:
         list_data_dict = list_data_dict[:10]
     
@@ -308,24 +314,29 @@ if __name__ == "__main__":
     
     result_dict = {'question': [], 'model_scores': [], 'total_mc1': 0.0, 'total_mc2': 0.0, 'total_mc3': 0.0}
     
-    config = AutoConfig.from_pretrained(model_name)
-
+    if 'chatglm' in model_name:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        config.num_hidden_layers = config.num_layers
+    else:
+        config = AutoConfig.from_pretrained(model_name)
     
     if args.layer_wise:
-        all_results = {f'Layer_{i+1}_lm_head':{'total_mc1':0.0} for i in range(config.num_hidden_layers)}
+        all_results = {f'Layer_{i+1}_lm_head':{'total_mc1': 0.0, 'total_mc2': 0.0, 'total_mc3': 0.0} for i in range(config.num_hidden_layers)}
+        all_results_ind = {f'Layer_{i+1}_lm_head':{'ind_mc1': list(), 'ind_mc2': list(), 'ind_mc3': list()} for i in range(config.num_hidden_layers)}
     else:
-        all_results = {f'Layer_{i+1}_attention':{'add': 0.0, 'sub': 0.0, 'mul': 0.0, 'div': 0.0, 'mix_ops_2': 0.0, 'mix_ops_3': 0.0, "min_ops_brackets":0.0} for i in range(config.num_hidden_layers)}
+        all_results = {f'Layer_{i+1}_attention':{'total_mc1': 0.0, 'total_mc2': 0.0, 'total_mc3': 0.0} for i in range(config.num_hidden_layers)}
     # all_results = {f'Layer_{i+1}_lm_head':{'total_mc1': 0.0, 'total_mc2': 0.0, 'total_mc3': 0.0} for i in range(config.num_hidden_layers-70)}
     with torch.no_grad():
         for ind, sample in enumerate(tqdm(list_data_dict)):
             # reference answers
-            # sample = json.loads(sample)
-            ref_true = sample['answer_true']
+            sample = json.loads(sample)
+            ref_true = sample['truth_answer']
             # ref_best = format_best(sample['truth_answer'])
             # # ref_true = split_multi_answer(sample['answer_true'])
-            ref_false = split_multi_answer(sample['answer_false'])
+            ref_false = sample['error']
             # print('answer choices')
-            # print(ref_best)
+            # # print(ref_best)
+            # print(sample['question'])
             # print(ref_true)
             # print(ref_false)
             scores_true = []
@@ -333,22 +344,29 @@ if __name__ == "__main__":
 
             generate_kwargs = dict(max_new_tokens=args.max_new_tokens, repetition_penalty=args.repetition_penalty, mode=mode, mature_layer=mature_layer, premature_layer=premature_layer, candidate_premature_layers=candidate_premature_layers, relative_top=args.relative_top, relative_top_value=args.relative_top_value, post_softmax=False)
 
-            # for temp_ans in ref_true:
+            
+            for temp_ans in ref_true:
+                temp_ans = format_math(temp_ans)
+                # print('ground-truth answer: ', temp_ans)
                 # append the current answer choice to the prompt
-            prompt, answer = build_prompt_and_answer(sample['question'], ref_true)
-            # print(prompt, answer)
-            log_probs, c_dist = llm.lm_score(prompt, answer, **generate_kwargs)
-            scores_true.append(log_probs)
-            # print(ref_false)
-               
+                prompt, answer = build_prompt_and_answer(sample['question'], temp_ans)
+                    
+                log_probs, c_dist = llm.lm_score(prompt, answer, **generate_kwargs)
+                scores_true.append(log_probs)
 
+               
+            # print('*******True_scores: ', scores_true[0][-10:])
             for temp_ans in ref_false:
                 # append the current answer choice to the prompt
+                
+                temp_ans = format_math(temp_ans)
+                # print('false answer: ', temp_ans)
                 prompt, answer = build_prompt_and_answer(sample['question'], temp_ans)
                 
                 log_probs, c_dist = llm.lm_score(prompt, answer, **generate_kwargs)
                 scores_false.append(log_probs)
 
+            # print('*******flase_scores: ', scores_false[0][-10:])
             if args.layer_wise or args.attention:
                 scores = []
                 # print(len(log_probs))
@@ -356,8 +374,12 @@ if __name__ == "__main__":
                     
                     score_true, score_false = np.array(scores_true)[:,ind_], np.array(scores_false)[:,ind_]
 
-                    score = Math_Cals(list(score_true), list(score_false), ref_true)
+                    score = MC_calcs(list(score_true), list(score_false), ref_true, ref_best=ref_true[0])
                     
+                    if np.isnan(score['MC1']) or np.isnan(score['MC2']) or np.isnan(score['MC3']):
+                        print(ind_)
+                        import ipdb; ipdb.set_trace()
+                        
                         
                     if args.layer_wise:
                         key_ = f'Layer_{ind_+1}_lm_head'
@@ -367,24 +389,36 @@ if __name__ == "__main__":
                     # update total scores
                     
                     all_results[key_]['total_mc1'] += score['MC1']
-
+                    all_results[key_]['total_mc2'] += score['MC2']
+                    all_results[key_]['total_mc3'] += score['MC3']
+                    
+                    
+                    all_results_ind[key_]['ind_mc1'].append(str(ind) +',' + str(score['MC1']))
+                    all_results_ind[key_]['ind_mc2'].append(str(ind) +',' + str(score['MC2']))
+                    all_results_ind[key_]['ind_mc3'].append(str(ind) +',' + str(score['MC3']))
 
     # Average the scores
-    # 'add': 0.0, 'sub': 0.0, 'mul': 0.0, 'div': 0.0, 'mix_ops_2': 0.0, 'mix_ops_3': 0.0, "min_ops_brackets":0.0
     for key, value in all_results.items():
-
         all_results[key]['total_mc1'] /= len(list_data_dict)
+        all_results[key]['total_mc2'] /= len(list_data_dict)
+        all_results[key]['total_mc3'] /= len(list_data_dict)
 
-        print(f'{key} MC1: \n{all_results[key]}')
-        
+    # Print the final scores, separated by ', '
+        print(f'{key}  MC1/2/3: \n{all_results[key]["total_mc1"]}, {all_results[key]["total_mc2"]}, {all_results[key]["total_mc3"]}')
+
+    model_tag = model_name.split('/')[-1] if model_name[-1] != '/' else model_name.split('/')[-2]
+
     import pandas as pd    
     df = pd.DataFrame(all_results)
+    df_ = pd.DataFrame(all_results_ind)
     # df.drop(index=['total_mc2','total_mc1'])
     # df.remove('question')
     # Write the DataFrame to an Excel file
     if not args.attention:
         file_name = args.output_path + f'output-path_layer_wise.xlsx'
+        file_name_ = args.output_path + f'output-path_layer_wise_ind.xlsx'
     else:
         file_name = args.output_path + f'output-path_layer_wise_atten.xlsx'
     
     df.to_excel(file_name, index=False)
+    df_.to_excel(file_name_, index=False)
